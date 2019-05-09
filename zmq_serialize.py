@@ -9,7 +9,7 @@
 
 """A Socket subclass that adds some serialization methods."""
 
-import zlib, zmq, pickle
+import zlib, zmq, pickle, time
 import numpy as np
 
 
@@ -58,28 +58,29 @@ class SerializingContext(zmq.Context):
 
 
 def main():
-    # S = np.zeros(shape=(32, 84, 84, 4), dtype=np.uint8)
-    # A = np.zeros(shape=(32, 6), dtype=np.float32)
-    # R = np.zeros(shape=(32,), dtype=np.float32)
-    shared_states = np.zeros(shape=(32, 84, 84, 4), dtype=np.uint8)
-    shared_actions = np.zeros(shape=(32, 6), dtype=np.float32)
-    shared_rewards = np.zeros(shape=(32,), dtype=np.float32)
+    shared_states = np.zeros(shape=(5, 32, 84, 84, 4), dtype=np.uint8)
+    shared_actions = np.zeros(shape=(5, 32, 6), dtype=np.float32)
+    shared_rewards = np.zeros(shape=(5, 32,), dtype=np.float32)
     data = []
     for e, (s, a, r) in enumerate(zip(shared_states, shared_actions, shared_rewards)):
         data.append((e, s, a, r))
 
     ctx = SerializingContext()
     req = ctx.socket(zmq.REQ)
+    req.connect("tcp://127.0.0.1:6666")
     rep = ctx.socket(zmq.REP)
+    rep.bind("tcp://127.0.0.1:6666")
 
-    rep.bind('inproc://a')
-    req.connect('inproc://a')
     # print("Array is %i bytes" % (A.nbytes))
 
     req.send_zipped_pickle(data)
     B = rep.recv_zipped_pickle()
     print("Checking zipped pickle...")
     print("Okay" if (shared_rewards[2] == B[2][3]).all() else "Failed")
+
+    req.close()
+    rep.close()
+
     # rep.send_array(A, copy=False)
     # C = req.recv_array(copy=False)
     # print("Checking send_array...")
