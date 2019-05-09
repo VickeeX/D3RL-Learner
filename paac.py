@@ -9,18 +9,36 @@ from emulator_runner import EmulatorRunner
 from runners import Runners
 import numpy as np
 
+import zmq
+from zmq_serialize import SerializingContext
+
 
 class PAACLearner(ActorLearner):
     def __init__(self, network_creator, environment_creator, args):
         super(PAACLearner, self).__init__(network_creator, environment_creator, args)
         self.workers = args.emulator_workers
+        self.ctx, self.req, self.rep = self.__create_zmq()
+
+    @staticmethod
+    def create_zmq():
+        # TODO: only local req
+        ctx = SerializingContext()
+        req = ctx.socket(zmq.REQ)
+        rep = ctx.socket(zmq.REP)
+
+        rep.bind('inproc://a')
+        req.connect('inproc://a')
+        return ctx, req, rep
+
+    def __create_zmq(self):
+        return PAACLearner.create_zmq()
 
     @staticmethod
     def choose_next_actions(network, num_actions, states, session):
         network_output_v, network_output_pi = session.run(
-            [network.output_layer_v,
-             network.output_layer_pi],
-            feed_dict={network.input_ph: states})
+                [network.output_layer_v,
+                 network.output_layer_pi],
+                feed_dict={network.input_ph: states})
 
         action_indices = PAACLearner.__sample_policy_action(network_output_pi)
 
@@ -118,55 +136,66 @@ class PAACLearner(ActorLearner):
 
                 episodes_over_masks[t] = 1.0 - shared_episode_over.astype(np.float32)
 
-                for e, (actual_reward, episode_over) in enumerate(zip(shared_rewards, shared_episode_over)):
-                    total_episode_rewards[e] += actual_reward
-                    actual_reward = self.rescale_reward(actual_reward)
-                    rewards[t, e] = actual_reward
+                # TODO: to receive on another node
+                print("******")
+                data = []
+                for e, (s, a, r) in enumerate(zip(shared_states, shared_actions, shared_rewards)):
+                    data.append((e, s, a, r))
+                self.req.send_zipped_pickle(data)
+                B = self.rep.recv_zipped_pickle()
+                print("Checking zipped pickle...")
+                print("Okay" if (data[4] == B[4]).all() else "Failed")
+                print("******")
 
-                    emulator_steps[e] += 1
-                    self.global_step += 1
-                    if episode_over:
-                        total_rewards.append(total_episode_rewards[e])
-                        episode_summary = tf.Summary(value=[
-                            tf.Summary.Value(tag='rl/reward', simple_value=total_episode_rewards[e]),
-                            tf.Summary.Value(tag='rl/episode_length', simple_value=emulator_steps[e]),
-                        ])
-                        self.summary_writer.add_summary(episode_summary, self.global_step)
-                        self.summary_writer.flush()
-                        total_episode_rewards[e] = 0
-                        emulator_steps[e] = 0
-                        actions_sum[e] = np.zeros(self.num_actions)
-
-            nest_state_value = self.session.run(
-                self.network.output_layer_v,
-                feed_dict={self.network.input_ph: shared_states})
-
-            estimated_return = np.copy(nest_state_value)
-
-            for t in reversed(range(max_local_steps)):
-                estimated_return = rewards[t] + self.gamma * estimated_return * episodes_over_masks[t]
-                y_batch[t] = np.copy(estimated_return)
-                adv_batch[t] = estimated_return - values[t]
-
-            flat_states = states.reshape([self.max_local_steps * self.emulator_counts] + list(shared_states.shape)[1:])
-            flat_y_batch = y_batch.reshape(-1)
-            flat_adv_batch = adv_batch.reshape(-1)
-            flat_actions = actions.reshape(max_local_steps * self.emulator_counts, self.num_actions)
-
-            lr = self.get_lr()
-            feed_dict = {self.network.input_ph: flat_states,
-                         self.network.critic_target_ph: flat_y_batch,
-                         self.network.selected_action_ph: flat_actions,
-                         self.network.adv_actor_ph: flat_adv_batch,
-                         self.learning_rate: lr}
-
-            _, summaries = self.session.run(
-                [self.train_step, summaries_op],
-                feed_dict=feed_dict)
-
-            self.summary_writer.add_summary(summaries, self.global_step)
-            self.summary_writer.flush()
-
+                # for e, (actual_reward, episode_over) in enumerate(zip(shared_rewards, shared_episode_over)):
+                #         total_episode_rewards[e] += actual_reward
+                #         actual_reward = self.rescale_reward(actual_reward)
+                #         rewards[t, e] = actual_reward
+                #
+                #         emulator_steps[e] += 1
+                #         self.global_step += 1
+                #         if episode_over:
+                #             total_rewards.append(total_episode_rewards[e])
+                #             episode_summary = tf.Summary(value=[
+                #                 tf.Summary.Value(tag='rl/reward', simple_value=total_episode_rewards[e]),
+                #                 tf.Summary.Value(tag='rl/episode_length', simple_value=emulator_steps[e]),
+                #             ])
+                #             self.summary_writer.add_summary(episode_summary, self.global_step)
+                #             self.summary_writer.flush()
+                #             total_episode_rewards[e] = 0
+                #             emulator_steps[e] = 0
+                #             actions_sum[e] = np.zeros(self.num_actions)
+                #
+                # nest_state_value = self.session.run(
+                #     self.network.output_layer_v,
+                #     feed_dict={self.network.input_ph: shared_states})
+                #
+                # estimated_return = np.copy(nest_state_value)
+                #
+                # for t in reversed(range(max_local_steps)):
+                #     estimated_return = rewards[t] + self.gamma * estimated_return * episodes_over_masks[t]
+                #     y_batch[t] = np.copy(estimated_return)
+                #     adv_batch[t] = estimated_return - values[t]
+                #
+                # flat_states = states.reshape([self.max_local_steps * self.emulator_counts] + list(shared_states.shape)[1:])
+                # flat_y_batch = y_batch.reshape(-1)
+                # flat_adv_batch = adv_batch.reshape(-1)
+                # flat_actions = actions.reshape(max_local_steps * self.emulator_counts, self.num_actions)
+                #
+                # lr = self.get_lr()
+                # feed_dict = {self.network.input_ph: flat_states,
+                #              self.network.critic_target_ph: flat_y_batch,
+                #              self.network.selected_action_ph: flat_actions,
+                #              self.network.adv_actor_ph: flat_adv_batch,
+                #              self.learning_rate: lr}
+                #
+                # _, summaries = self.session.run(
+                #     [self.train_step, summaries_op],
+                #     feed_dict=feed_dict)
+                #
+                # self.summary_writer.add_summary(summaries, self.global_step)
+                # self.summary_writer.flush()
+                #
             counter += 1
 
             if counter % (2048 / self.emulator_counts) == 0:
