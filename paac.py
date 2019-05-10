@@ -8,12 +8,16 @@ import logging
 from emulator_runner import EmulatorRunner
 from runners import Runners
 import numpy as np
+import grpc
+from grpc_utils_flatten import batch_data_pb2, batch_data_pb2_grpc
 
 
 class PAACLearner(ActorLearner):
     def __init__(self, network_creator, environment_creator, args):
         super(PAACLearner, self).__init__(network_creator, environment_creator, args)
         self.workers = args.emulator_workers
+        self.channel = grpc.insecure_channel('127.0.0.1:50051')
+        self.stub = batch_data_pb2_grpc.TransferBatchDataStub(self.channel)
 
     @staticmethod
     def choose_next_actions(network, num_actions, states, session):
@@ -119,10 +123,14 @@ class PAACLearner(ActorLearner):
                 episodes_over_masks[t] = 1.0 - shared_episode_over.astype(np.float32)
             # TODO: gRPC
             print("******")
-            data = []
-            for e, (s, a, r) in enumerate(zip(states, actions, rewards)):
-                data.append((e, s, a, r))
-            print(data[0][1].shape, data[0][2].shape, data[0][3].shape)
+            # data = []
+            # for e, (s, a, r) in enumerate(zip(states, actions, rewards)):
+            #     data.append((e, s, a, r))
+            # print(data[0][1].shape, data[0][2].shape, data[0][3].shape)
+
+            response = self.stub.Send(
+                    batch_data_pb2.BatchData(states=states, actions=actions, rewards=rewards))
+            print("Transfer client received: " + str(response.boolean))
 
             print("******")
 

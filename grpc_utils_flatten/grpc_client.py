@@ -16,7 +16,6 @@ def run():
     shared_actions = np.ones(shape=(5, 32, 6), dtype=np.float32).flatten()
     shared_rewards = np.zeros(shape=(5, 32,), dtype=np.float32).flatten()
 
-
     # 连接 rpc 服务器
 
     channel = grpc.insecure_channel('127.0.0.1:50051')
