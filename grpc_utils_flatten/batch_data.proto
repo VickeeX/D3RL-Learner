@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+service TransferBatchData {
+    rpc Send (BatchData) returns (ReceiveReply) {
+    };
+}
+
+message BatchData {
+    repeated uint32 states = 1;
+    repeated float actions = 2;
+    repeated float rewards = 3;
+}
+
+
+message ReceiveReply {
+    bool boolean = 2;
+}
