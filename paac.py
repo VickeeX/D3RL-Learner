@@ -1,23 +1,28 @@
-import time
+import time, logging, zmq
 from multiprocessing import Queue
 from multiprocessing.sharedctypes import RawArray
 from ctypes import c_uint, c_float
 from actor_learner import *
-import logging
-
 from emulator_runner import EmulatorRunner
 from runners import Runners
-import numpy as np
-import grpc
-from grpc_utils_flatten import batch_data_pb2, batch_data_pb2_grpc
+from zmq_serialize import SerializingContext
 
 
 class PAACLearner(ActorLearner):
     def __init__(self, network_creator, environment_creator, args):
         super(PAACLearner, self).__init__(network_creator, environment_creator, args)
         self.workers = args.emulator_workers
-        self.channel = grpc.insecure_channel('127.0.0.1:50051')
-        self.stub = batch_data_pb2_grpc.TransferBatchDataStub(self.channel)
+        self.req = self.__create_zmq_req_socket()
+
+    @staticmethod
+    def create_zmq_req_socket():
+        ctx = SerializingContext()
+        req = ctx.socket(zmq.REQ)
+        req.connect("tcp://127.0.0.1:6666")
+        return req
+
+    def __create_zmq_req_socket(self):
+        return PAACLearner.create_zmq_req_socket()
 
     @staticmethod
     def choose_next_actions(network, num_actions, states, session):
@@ -121,17 +126,15 @@ class PAACLearner(ActorLearner):
                 # Done updating all environments, have new states, rewards and is_over
 
                 episodes_over_masks[t] = 1.0 - shared_episode_over.astype(np.float32)
-            # TODO: gRPC
+
             print("******")
-            # data = []
-            # for e, (s, a, r) in enumerate(zip(states, actions, rewards)):
-            #     data.append((e, s, a, r))
-            # print(data[0][1].shape, data[0][2].shape, data[0][3].shape)
-
-            response = self.stub.Send(
-                    batch_data_pb2.BatchData(states=states, actions=actions, rewards=rewards))
-            print("Transfer client received: " + str(response.boolean))
-
+            data = []
+            for e, (s, a, r) in enumerate(zip(states, actions, rewards)):
+                data.append((e, s, a, r))
+            self.req.send_zipped_pickle(data)
+            # self.req.send_zipped_pickle(enumerate(zip(states, actions, rewards)))
+            _ = self.req.recv_string()
+            print("Send data okay.")
             print("******")
 
             # for e, (actual_reward, episode_over) in enumerate(zip(shared_rewards, shared_episode_over)):
