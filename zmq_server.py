@@ -9,8 +9,8 @@
 
 """A Socket subclass that adds some serialization methods."""
 
-import zlib, zmq, pickle, time
-import numpy as np
+import zlib, zmq, pickle
+from fake_learner import put_batch
 
 
 class SerializingSocket(zmq.Socket):
@@ -57,7 +57,7 @@ class SerializingContext(zmq.Context):
     _socket_class = SerializingSocket
 
 
-def main():
+def zmq_server_run():
     # shared_states = np.zeros(shape=(5, 32, 84, 84, 4), dtype=np.uint8)
     # shared_actions = np.zeros(shape=(5, 32, 6), dtype=np.float32)
     # shared_rewards = np.zeros(shape=(5, 32,), dtype=np.float32)
@@ -71,6 +71,7 @@ def main():
 
     while True:
         data = rep.recv_zipped_pickle()
+        put_batch(data)
         print("Checking zipped pickle...")
         # print("Okay" if (shared_rewards[2] == B[2][3]).all() else "Failed")
         rep.send_string("received data.")
@@ -79,6 +80,6 @@ def main():
         # rep.close()
         # rep.send_array(A, copy=False)
 
-
-if __name__ == '__main__':
-    main()
+#
+# if __name__ == '__main__':
+#     zmq_server_run()
