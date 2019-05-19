@@ -6,12 +6,11 @@ from logger_utils import variable_summaries
 import os
 
 CHECKPOINT_INTERVAL = 1000000
- 
+
 
 class ActorLearner(Process):
-    
-    def __init__(self, network_creator, environment_creator, args):
-        
+    def __init__(self, network_creator, args):
+
         super(ActorLearner, self).__init__()
 
         self.global_step = 0
@@ -33,8 +32,6 @@ class ActorLearner(Process):
         self.optimizer = tf.train.RMSPropOptimizer(self.learning_rate, decay=args.alpha, epsilon=args.e,
                                                    name=optimizer_variable_names)
 
-        self.emulators = np.asarray([environment_creator.create_environment(i)
-                                     for i in range(self.emulator_counts)])
         self.max_global_steps = args.max_global_steps
         self.gamma = args.gamma
         self.game = args.game
@@ -54,13 +51,13 @@ class ActorLearner(Process):
         elif args.clip_norm_type == 'global':
             # Clip network grads by network norm
             gradients_n_norm = tf.clip_by_global_norm(
-                [g for g, v in grads_and_vars], args.clip_norm)
+                    [g for g, v in grads_and_vars], args.clip_norm)
             global_norm = tf.identity(gradients_n_norm[1], name='global_norm')
             grads_and_vars = list(zip(gradients_n_norm[0], [v for g, v in grads_and_vars]))
         elif args.clip_norm_type == 'local':
             # Clip layer grads by layer norm
             gradients = [tf.clip_by_norm(
-                g, args.clip_norm) for g in grads_and_vars]
+                    g, args.clip_norm) for g in grads_and_vars]
             grads_and_vars = list(zip(gradients, [v for g, v in grads_and_vars]))
             global_norm = tf.global_norm([g for g, v in grads_and_vars], name='global_norm')
         else:
@@ -125,4 +122,3 @@ class ActorLearner(Process):
     def cleanup(self):
         self.save_vars(True)
         self.session.close()
-

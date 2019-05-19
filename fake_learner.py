@@ -48,7 +48,6 @@ def fake_server():
 
 
 if __name__ == '__main__':
-    # TODO: no-wait get and put, adjust maxsize
     queue = mp.Queue(maxsize=10240)
     learner = FakeLearner()
     # mp.Process(target=fake_server).run()

@@ -1,17 +1,15 @@
 import time, logging, zmq
-from multiprocessing import Queue
 from multiprocessing.sharedctypes import RawArray
 from ctypes import c_uint, c_float
 from actor_learner import *
-from emulator_runner import EmulatorRunner
-from runners import Runners
 from zmq_serialize import SerializingContext
+from train import get_batch
 
 
 class PAACLearner(ActorLearner):
-    def __init__(self, network_creator, environment_creator, args):
-        super(PAACLearner, self).__init__(network_creator, environment_creator, args)
-        self.workers = args.emulator_workers
+    def __init__(self, network_creator, args):
+        super(PAACLearner, self).__init__(network_creator, args)
+        # self.workers = args.emulator_workers
         self.req = self.__create_zmq_req_socket()
 
     @staticmethod
@@ -80,14 +78,24 @@ class PAACLearner(ActorLearner):
         total_rewards = []
 
         # state, reward, episode_over, action
-        variables = [(np.asarray([emulator.get_initial_state() for emulator in self.emulators], dtype=np.uint8)),
-                     (np.zeros(self.emulator_counts, dtype=np.float32)),
-                     (np.asarray([False] * self.emulator_counts, dtype=np.float32)),
-                     (np.zeros((self.emulator_counts, self.num_actions), dtype=np.float32))]
+        # variables = [(np.asarray([emulator.get_initial_state() for emulator in self.emulators], dtype=np.uint8)),
+        #              (np.zeros(self.emulator_counts, dtype=np.float32)),
+        #              (np.asarray([False] * self.emulator_counts, dtype=np.float32)),
+        #              (np.zeros((self.emulator_counts, self.num_actions), dtype=np.float32))]
 
-        self.runners = Runners(EmulatorRunner, self.emulators, self.workers, variables)
-        self.runners.start()
-        shared_states, shared_rewards, shared_episode_over, shared_actions = self.runners.get_shared_variables()
+        # self.runners = Runners(EmulatorRunner, self.emulators, self.workers, variables)
+        # self.runners.start()
+        # TODO: check the shape of varibles
+        # shared_states, shared_rewards, shared_episode_over, shared_actions = self.runners.get_shared_variables()
+
+        shared_states = np.asarray([np.zeros(shape=(32, 84, 84, 4), dtype=np.uint8) for _ in self.emulator_counts],
+                                   dtype=np.uint8)
+
+        shared_rewards, shared_episode_over, shared_actions = np.zeros(self.emulator_counts, dtype=np.float32), \
+                                                              np.asarray([False] * self.emulator_counts,
+                                                                         dtype=np.float32), \
+                                                              np.zeros((self.emulator_counts, self.num_actions),
+                                                                       dtype=np.float32)
 
         summaries_op = tf.summary.merge_all()
 
@@ -110,82 +118,73 @@ class PAACLearner(ActorLearner):
             loop_start_time = time.time()
 
             max_local_steps = self.max_local_steps
-            for t in range(max_local_steps):
-                next_actions, readouts_v_t, readouts_pi_t = self.__choose_next_actions(shared_states)
-                actions_sum += next_actions
-                for z in range(next_actions.shape[0]):
-                    shared_actions[z] = next_actions[z]
+            # TODO: get e,(s,a,r,o) from ZMQ, shared queues
+            # for t in range(max_local_steps):
+            #     next_actions, readouts_v_t, readouts_pi_t = self.__choose_next_actions(shared_states)
+            #     actions_sum += next_actions
+            #     for z in range(next_actions.shape[0]):
+            #         shared_actions[z] = next_actions[z]
+            #
+            #     actions[t] = next_actions
+            #     values[t] = readouts_v_t
+            #     states[t] = shared_states
+            #
+            #     # Start updating all environments with next_actions
+            #     self.runners.update_environments()
+            #     self.runners.wait_updated()
+            #     # Done updating all environments, have new states, rewards and is_over
 
-                actions[t] = next_actions
-                values[t] = readouts_v_t
-                states[t] = shared_states
+            episodes_over_masks[t] = 1.0 - shared_episode_over.astype(np.float32)
 
-                # Start updating all environments with next_actions
-                self.runners.update_environments()
-                self.runners.wait_updated()
-                # Done updating all environments, have new states, rewards and is_over
+            for e, (actual_reward, episode_over) in enumerate(zip(shared_rewards, shared_episode_over)):
+                total_episode_rewards[e] += actual_reward
+                actual_reward = self.rescale_reward(actual_reward)
+                rewards[t, e] = actual_reward
 
-                episodes_over_masks[t] = 1.0 - shared_episode_over.astype(np.float32)
+                emulator_steps[e] += 1
+                self.global_step += 1
+                if episode_over:
+                    total_rewards.append(total_episode_rewards[e])
+                    episode_summary = tf.Summary(value=[
+                        tf.Summary.Value(tag='rl/reward', simple_value=total_episode_rewards[e]),
+                        tf.Summary.Value(tag='rl/episode_length', simple_value=emulator_steps[e]),
+                    ])
+                    self.summary_writer.add_summary(episode_summary, self.global_step)
+                    self.summary_writer.flush()
+                    total_episode_rewards[e] = 0
+                    emulator_steps[e] = 0
+                    actions_sum[e] = np.zeros(self.num_actions)
 
-            print("******")
-            data = []
-            for e, (s, a, r) in enumerate(zip(states, actions, rewards)):
-                data.append((e, s, a, r))
-            self.req.send_zipped_pickle(data)
-            # self.req.send_zipped_pickle(enumerate(zip(states, actions, rewards)))
-            _ = self.req.recv_string()
-            print("Send data okay.")
-            print("******")
+            nest_state_value = self.session.run(
+                    self.network.output_layer_v,
+                    feed_dict={self.network.input_ph: shared_states})
 
-            # for e, (actual_reward, episode_over) in enumerate(zip(shared_rewards, shared_episode_over)):
-            #         total_episode_rewards[e] += actual_reward
-            #         actual_reward = self.rescale_reward(actual_reward)
-            #         rewards[t, e] = actual_reward
-            #
-            #         emulator_steps[e] += 1
-            #         self.global_step += 1
-            #         if episode_over:
-            #             total_rewards.append(total_episode_rewards[e])
-            #             episode_summary = tf.Summary(value=[
-            #                 tf.Summary.Value(tag='rl/reward', simple_value=total_episode_rewards[e]),
-            #                 tf.Summary.Value(tag='rl/episode_length', simple_value=emulator_steps[e]),
-            #             ])
-            #             self.summary_writer.add_summary(episode_summary, self.global_step)
-            #             self.summary_writer.flush()
-            #             total_episode_rewards[e] = 0
-            #             emulator_steps[e] = 0
-            #             actions_sum[e] = np.zeros(self.num_actions)
-            #
-            # nest_state_value = self.session.run(
-            #     self.network.output_layer_v,
-            #     feed_dict={self.network.input_ph: shared_states})
-            #
-            # estimated_return = np.copy(nest_state_value)
-            #
-            # for t in reversed(range(max_local_steps)):
-            #     estimated_return = rewards[t] + self.gamma * estimated_return * episodes_over_masks[t]
-            #     y_batch[t] = np.copy(estimated_return)
-            #     adv_batch[t] = estimated_return - values[t]
-            #
-            # flat_states = states.reshape([self.max_local_steps * self.emulator_counts] + list(shared_states.shape)[1:])
-            # flat_y_batch = y_batch.reshape(-1)
-            # flat_adv_batch = adv_batch.reshape(-1)
-            # flat_actions = actions.reshape(max_local_steps * self.emulator_counts, self.num_actions)
-            #
-            # lr = self.get_lr()
-            # feed_dict = {self.network.input_ph: flat_states,
-            #              self.network.critic_target_ph: flat_y_batch,
-            #              self.network.selected_action_ph: flat_actions,
-            #              self.network.adv_actor_ph: flat_adv_batch,
-            #              self.learning_rate: lr}
-            #
-            # _, summaries = self.session.run(
-            #     [self.train_step, summaries_op],
-            #     feed_dict=feed_dict)
-            #
-            # self.summary_writer.add_summary(summaries, self.global_step)
-            # self.summary_writer.flush()
-            #
+            estimated_return = np.copy(nest_state_value)
+
+            for t in reversed(range(max_local_steps)):
+                estimated_return = rewards[t] + self.gamma * estimated_return * episodes_over_masks[t]
+                y_batch[t] = np.copy(estimated_return)
+                adv_batch[t] = estimated_return - values[t]
+
+            flat_states = states.reshape([self.max_local_steps * self.emulator_counts] + list(shared_states.shape)[1:])
+            flat_y_batch = y_batch.reshape(-1)
+            flat_adv_batch = adv_batch.reshape(-1)
+            flat_actions = actions.reshape(max_local_steps * self.emulator_counts, self.num_actions)
+
+            lr = self.get_lr()
+            feed_dict = {self.network.input_ph: flat_states,
+                         self.network.critic_target_ph: flat_y_batch,
+                         self.network.selected_action_ph: flat_actions,
+                         self.network.adv_actor_ph: flat_adv_batch,
+                         self.learning_rate: lr}
+
+            _, summaries = self.session.run(
+                    [self.train_step, summaries_op],
+                    feed_dict=feed_dict)
+
+            self.summary_writer.add_summary(summaries, self.global_step)
+            self.summary_writer.flush()
+
             counter += 1
 
             if counter % (2048 / self.emulator_counts) == 0:
@@ -203,4 +202,4 @@ class PAACLearner(ActorLearner):
 
     def cleanup(self):
         super(PAACLearner, self).cleanup()
-        self.runners.stop()
+        # self.runners.stop()
