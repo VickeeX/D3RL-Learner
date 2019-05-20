@@ -55,20 +55,3 @@ class SerializingSocket(zmq.Socket):
 class SerializingContext(zmq.Context):
     _socket_class = SerializingSocket
 
-# def main():
-#     shared_states = np.zeros(shape=(5, 32, 84, 84, 4), dtype=np.uint8)
-#     shared_actions = np.zeros(shape=(5, 32, 6), dtype=np.float32)
-#     shared_rewards = np.zeros(shape=(5, 32,), dtype=np.float32)
-#     data = []
-#     for e, (s, a, r) in enumerate(zip(shared_states, shared_actions, shared_rewards)):
-#         data.append((e, s, a, r))
-#
-#     ctx = SerializingContext()
-#     req = ctx.socket(zmq.REQ)
-#     req.connect("tcp://127.0.0.1:6666")
-#
-#     # print("Array is %i bytes" % (A.nbytes))
-#
-#     req.send_zipped_pickle(data)
-#     req.close()
-#

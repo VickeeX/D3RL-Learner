@@ -1,26 +1,32 @@
-import time, logging, zmq
+import time, logging, zmq, multiprocessing as mp
 from multiprocessing.sharedctypes import RawArray
 from ctypes import c_uint, c_float
 from actor_learner import *
 from zmq_serialize import SerializingContext
-from train import get_batch
 
 
 class PAACLearner(ActorLearner):
     def __init__(self, network_creator, args):
         super(PAACLearner, self).__init__(network_creator, args)
         # self.workers = args.emulator_workers
-        self.req = self.__create_zmq_req_socket()
+        self.queue = mp.Queue(maxsize=102400)
 
-    @staticmethod
-    def create_zmq_req_socket():
+    def zmq_server_run(self):
         ctx = SerializingContext()
-        req = ctx.socket(zmq.REQ)
-        req.connect("tcp://127.0.0.1:6666")
-        return req
+        rep = ctx.socket(zmq.REP)
+        rep.bind("tcp://127.0.0.1:6666")
 
-    def __create_zmq_req_socket(self):
-        return PAACLearner.create_zmq_req_socket()
+        while True:
+            data = rep.recv_zipped_pickle()
+            self.put_batch(data)
+            # print("Checking zipped pickle...")
+            rep.send_string("received data.")
+
+    def put_batch(self, data):
+        self.queue.put(data)
+
+    def get_batch(self):
+        return self.queue.get()
 
     @staticmethod
     def choose_next_actions(network, num_actions, states, session):
@@ -67,6 +73,7 @@ class PAACLearner(ActorLearner):
         """
         Main actor learner loop for parallel advantage actor critic learning.
         """
+        mp.Process(target=self.zmq_server_run).start()
 
         self.global_step = self.init_network()
 
@@ -109,8 +116,8 @@ class PAACLearner(ActorLearner):
 
             max_local_steps = self.max_local_steps
 
-            # TODO: get data from shared queues
-            states, rewards, episodes_over_masks, actions, values = get_batch()
+            states, rewards, episodes_over_masks, actions, values = self.get_batch()
+            print("Get batch data:", self.global_step, "from queue")
 
             # for t in range(max_local_steps):
             #     next_actions, readouts_v_t, readouts_pi_t = self.__choose_next_actions(shared_states)

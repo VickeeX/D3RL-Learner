@@ -8,7 +8,6 @@ import multiprocessing
 
 from paac import PAACLearner
 from policy_v_network import NaturePolicyVNetwork, NIPSPolicyVNetwork
-from zmq_server import zmq_server_run
 
 logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
 
@@ -119,16 +118,6 @@ def get_arg_parser():
     return parser
 
 
-def put_batch(data):
-    queue.put(data)
-    print("put ok")
-    # print(self.queue.qsize())
-
-
-def get_batch():
-    return queue.get()
-
-
 if __name__ == '__main__':
     args = get_arg_parser().parse_args()
 
@@ -136,8 +125,5 @@ if __name__ == '__main__':
 
     logger_utils.save_args(args, args.debugging_folder)
     logging.debug(args)
-
-    queue = multiprocessing.Queue(maxsize=10240)
-    multiprocessing.Process(target=zmq_server_run).run()
 
     main(args)
