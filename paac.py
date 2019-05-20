@@ -85,17 +85,7 @@ class PAACLearner(ActorLearner):
 
         # self.runners = Runners(EmulatorRunner, self.emulators, self.workers, variables)
         # self.runners.start()
-        # TODO: check the shape of varibles
         # shared_states, shared_rewards, shared_episode_over, shared_actions = self.runners.get_shared_variables()
-
-        shared_states = np.asarray([np.zeros(shape=(32, 84, 84, 4), dtype=np.uint8) for _ in self.emulator_counts],
-                                   dtype=np.uint8)
-
-        shared_rewards, shared_episode_over, shared_actions = np.zeros(self.emulator_counts, dtype=np.float32), \
-                                                              np.asarray([False] * self.emulator_counts,
-                                                                         dtype=np.float32), \
-                                                              np.zeros((self.emulator_counts, self.num_actions),
-                                                                       dtype=np.float32)
 
         summaries_op = tf.summary.merge_all()
 
@@ -105,11 +95,11 @@ class PAACLearner(ActorLearner):
         actions_sum = np.zeros((self.emulator_counts, self.num_actions))
         y_batch = np.zeros((self.max_local_steps, self.emulator_counts))
         adv_batch = np.zeros((self.max_local_steps, self.emulator_counts))
-        rewards = np.zeros((self.max_local_steps, self.emulator_counts))
-        states = np.zeros([self.max_local_steps] + list(shared_states.shape), dtype=np.uint8)
-        actions = np.zeros((self.max_local_steps, self.emulator_counts, self.num_actions))
-        values = np.zeros((self.max_local_steps, self.emulator_counts))
-        episodes_over_masks = np.zeros((self.max_local_steps, self.emulator_counts))
+        # rewards = np.zeros((self.max_local_steps, self.emulator_counts))
+        # states = np.zeros([self.max_local_steps, self.emulator_counts] + [84, 84, 4], dtype=np.uint8)
+        # actions = np.zeros((self.max_local_steps, self.emulator_counts, self.num_actions))
+        # values = np.zeros((self.max_local_steps, self.emulator_counts))
+        # episodes_over_masks = np.zeros((self.max_local_steps, self.emulator_counts))
 
         start_time = time.time()
 
@@ -118,7 +108,10 @@ class PAACLearner(ActorLearner):
             loop_start_time = time.time()
 
             max_local_steps = self.max_local_steps
-            # TODO: get e,(s,a,r,o) from ZMQ, shared queues
+
+            # TODO: get data from shared queues
+            states, rewards, episodes_over_masks, actions, values = get_batch()
+
             # for t in range(max_local_steps):
             #     next_actions, readouts_v_t, readouts_pi_t = self.__choose_next_actions(shared_states)
             #     actions_sum += next_actions
@@ -133,31 +126,30 @@ class PAACLearner(ActorLearner):
             #     self.runners.update_environments()
             #     self.runners.wait_updated()
             #     # Done updating all environments, have new states, rewards and is_over
+            # episodes_over_masks[t] = 1.0 - shared_episode_over.astype(np.float32)
 
-            episodes_over_masks[t] = 1.0 - shared_episode_over.astype(np.float32)
-
-            for e, (actual_reward, episode_over) in enumerate(zip(shared_rewards, shared_episode_over)):
-                total_episode_rewards[e] += actual_reward
-                actual_reward = self.rescale_reward(actual_reward)
-                rewards[t, e] = actual_reward
-
-                emulator_steps[e] += 1
-                self.global_step += 1
-                if episode_over:
-                    total_rewards.append(total_episode_rewards[e])
-                    episode_summary = tf.Summary(value=[
-                        tf.Summary.Value(tag='rl/reward', simple_value=total_episode_rewards[e]),
-                        tf.Summary.Value(tag='rl/episode_length', simple_value=emulator_steps[e]),
-                    ])
-                    self.summary_writer.add_summary(episode_summary, self.global_step)
-                    self.summary_writer.flush()
-                    total_episode_rewards[e] = 0
-                    emulator_steps[e] = 0
-                    actions_sum[e] = np.zeros(self.num_actions)
+            # for e, (actual_reward, episode_over) in enumerate(zip(shared_rewards, shared_episode_over)):
+            #     total_episode_rewards[e] += actual_reward
+            #     actual_reward = self.rescale_reward(actual_reward)
+            #     rewards[t, e] = actual_reward
+            #
+            #     emulator_steps[e] += 1
+            #     self.global_step += 1
+            #     if episode_over:
+            #         total_rewards.append(total_episode_rewards[e])
+            #         episode_summary = tf.Summary(value=[
+            #             tf.Summary.Value(tag='rl/reward', simple_value=total_episode_rewards[e]),
+            #             tf.Summary.Value(tag='rl/episode_length', simple_value=emulator_steps[e]),
+            #         ])
+            #         self.summary_writer.add_summary(episode_summary, self.global_step)
+            #         self.summary_writer.flush()
+            #         total_episode_rewards[e] = 0
+            #         emulator_steps[e] = 0
+            #         actions_sum[e] = np.zeros(self.num_actions)
 
             nest_state_value = self.session.run(
                     self.network.output_layer_v,
-                    feed_dict={self.network.input_ph: shared_states})
+                    feed_dict={self.network.input_ph: states[-1]})  # shared_states
 
             estimated_return = np.copy(nest_state_value)
 
@@ -166,7 +158,7 @@ class PAACLearner(ActorLearner):
                 y_batch[t] = np.copy(estimated_return)
                 adv_batch[t] = estimated_return - values[t]
 
-            flat_states = states.reshape([self.max_local_steps * self.emulator_counts] + list(shared_states.shape)[1:])
+            flat_states = states.reshape([self.max_local_steps * self.emulator_counts] + [84, 84, 4])
             flat_y_batch = y_batch.reshape(-1)
             flat_adv_batch = adv_batch.reshape(-1)
             flat_actions = actions.reshape(max_local_steps * self.emulator_counts, self.num_actions)
