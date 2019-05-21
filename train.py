@@ -4,8 +4,7 @@ import sys
 import signal
 import os
 import copy
-import multiprocessing
-
+import environment_creator
 from paac import PAACLearner
 from policy_v_network import NaturePolicyVNetwork, NIPSPolicyVNetwork
 
@@ -51,8 +50,13 @@ def setup_kill_signal_handler(learner):
 
 
 def get_network_creator(args, random_seed=3):
+    env_creator = environment_creator.EnvironmentCreator(args)
+    num_actions = env_creator.num_actions
+    args.num_actions = num_actions
     args.random_seed = random_seed
-    network_conf = {'entropy_regularisation_strength': args.entropy_regularisation_strength,
+
+    network_conf = {'num_actions': num_actions,
+                    'entropy_regularisation_strength': args.entropy_regularisation_strength,
                     'device': args.device,
                     'clip_norm': args.clip_norm,
                     'clip_norm_type': args.clip_norm_type}
