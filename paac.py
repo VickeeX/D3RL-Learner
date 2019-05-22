@@ -11,16 +11,27 @@ class PAACLearner(ActorLearner):
         # self.workers = args.emulator_workers
         self.queue = mp.Queue(maxsize=102400)
         self.zmq_server_proc = mp.Process(target=self.zmq_server_run)
+        self.cpu_num = args.cpu_num
 
     def zmq_server_run(self):
         ctx = SerializingContext()
         rep = ctx.socket(zmq.REP)
         rep.bind("tcp://127.0.0.1:6666")
+        count = 0
+        stop_worker = self.cpu_num
         while True:
-            data = self.rep.recv_zipped_pickle()
-            self.put_batch(data)
+            data = rep.recv_zipped_pickle()
             # print("Checking zipped pickle...")
-            self.rep.send_string("received data.")
+            count += 1
+            if count > self.max_global_steps:
+                rep.send_string("stop")
+                stop_worker -= 1
+                if stop_worker <= 0:
+                    break
+            else:
+                self.put_batch(data)
+                rep.send_string("received data.")
+        rep.close()
 
     def put_batch(self, data):
         self.queue.put(data)

@@ -119,6 +119,8 @@ def get_arg_parser():
                         help="Folder where to save the debugging information.", dest="debugging_folder")
     parser.add_argument('-rs', '--random_start', default=True, type=bool_arg,
                         help="Whether or not to start with 30 noops for each env. Default True", dest="random_start")
+    parser.add_argument('-cn', '--cpu_num', default=1, type=int,
+                        help="The num of CPUs that sample", dest="cpu_num")
     return parser
 
 
