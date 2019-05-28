@@ -1,4 +1,4 @@
-import time, logging, zmq, multiprocessing as mp
+import time, logging, zmq, multiprocessing as mp, requests
 from multiprocessing.sharedctypes import RawArray
 from ctypes import c_uint, c_float
 from actor_learner import *
@@ -19,10 +19,11 @@ class PAACLearner(ActorLearner):
         rep.bind("tcp://127.0.0.1:6666")
         count = 0
         stop_worker = self.cpu_num
+        batch = self.max_local_steps * self.emulator_counts
         while True:
             data = rep.recv_zipped_pickle()
             # print("Checking zipped pickle...")
-            count += 1
+            count += batch
             if count > self.max_global_steps:
                 rep.send_string("stop")
                 stop_worker -= 1
@@ -206,6 +207,16 @@ class PAACLearner(ActorLearner):
                                      (global_steps - global_step_start) / (curr_time - start_time),
                                      last_ten))
             self.save_vars()
+
+            # transfer network checkpoint to workers
+            if counter % 8 == 0:
+                ckpt_path = tf.train.latest_checkpoint(self.network_checkpoint_folder)
+                file = [('files', open(ckpt_path + '.meta', 'rb')),
+                        ('files', open(ckpt_path + '.index', 'rb')),
+                        ('files', open(ckpt_path + '.data-00000-of-00001', 'rb'))]
+                r = requests.post('http://127.0.0.1:6667/d3rl/network', files=file)
+                # print(r.text)
+                print("send network ckpt: %s ok." % ckpt_path)
 
         self.cleanup()
 
