@@ -85,8 +85,8 @@ class ActorLearner(Process):
 
     def save_vars(self, force=False):
         if force or self.global_step - self.last_saving_step >= CHECKPOINT_INTERVAL:
-            self.last_saving_step = self.global_step
-            self.network_saver.save(self.session, self.network_checkpoint_folder, global_step=self.last_saving_step)
+            # self.last_saving_step = self.global_step
+            # self.network_saver.save(self.session, self.network_checkpoint_folder, global_step=self.last_saving_step)
             self.optimizer_saver.save(self.session, self.optimizer_checkpoint_folder, global_step=self.last_saving_step)
 
     def rescale_reward(self, reward):
