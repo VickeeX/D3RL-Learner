@@ -210,15 +210,20 @@ class PAACLearner(ActorLearner):
 
             # transfer network checkpoint to workers
             if counter % 8 == 0:
-                ckpt_path = tf.train.latest_checkpoint(self.network_checkpoint_folder)
-                file = [('files', open(ckpt_path + '.meta', 'rb')),
-                        ('files', open(ckpt_path + '.index', 'rb')),
-                        ('files', open(ckpt_path + '.data-00000-of-00001', 'rb'))]
-                r = requests.post('http://127.0.0.1:6667/d3rl/network', files=file)
-                # print(r.text)
-                print("send network ckpt: %s ok." % ckpt_path)
+                self.last_saving_step = self.global_step
+                self.network_saver.save(self.session, self.network_checkpoint_folder, global_step=self.last_saving_step)
+                Process(target=self.post_network_ckpt).start()
 
         self.cleanup()
+
+    def post_network_ckpt(self):
+        ckpt_path = tf.train.latest_checkpoint(self.network_checkpoint_folder)
+        file = [('files', open(ckpt_path + '.meta', 'rb')),
+                ('files', open(ckpt_path + '.index', 'rb')),
+                ('files', open(ckpt_path + '.data-00000-of-00001', 'rb'))]
+        r = requests.post('http://127.0.0.1:6667/d3rl/network', files=file)
+        # print(r.text)
+        print("Post network ckpt: %s." % ckpt_path)
 
     def cleanup(self):
         super(PAACLearner, self).cleanup()
