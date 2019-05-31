@@ -23,7 +23,8 @@ def bool_arg(string):
 
 def main(args):
     logging.debug('Configuration: {}'.format(args))
-
+    logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
+    
     network_creator = get_network_creator(args)
 
     learner = PAACLearner(network_creator, args)

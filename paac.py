@@ -200,30 +200,32 @@ class PAACLearner(ActorLearner):
             if counter % (2048 / self.emulator_counts) == 0:
                 curr_time = time.time()
                 global_steps = self.global_step
-                last_ten = 0.0 if len(total_rewards) < 1 else np.mean(total_rewards[-10:])
-                logging.info("Ran {} steps, at {} steps/s ({} steps/s avg), last 10 rewards avg {}"
-                             .format(global_steps,
-                                     self.max_local_steps * self.emulator_counts / (curr_time - loop_start_time),
-                                     (global_steps - global_step_start) / (curr_time - start_time),
-                                     last_ten))
+                logging.info("Ran {} steps, at {} steps/s.".format(global_steps,
+                                                                   self.max_local_steps * self.emulator_counts / (
+                                                                   curr_time - loop_start_time)))
             self.save_vars()
 
             # transfer network checkpoint to workers
-            if counter % 8 == 0:
+            if counter % 16 == 0:
                 self.last_saving_step = self.global_step
                 self.network_saver.save(self.session, self.network_checkpoint_folder, global_step=self.last_saving_step)
-                Process(target=self.post_network_ckpt).start()
+                ckpt_path = tf.train.latest_checkpoint(self.network_checkpoint_folder)
+                file = [('files', open(ckpt_path + '.meta', 'rb')),
+                        ('files', open(ckpt_path + '.index', 'rb')),
+                        ('files', open(ckpt_path + '.data-00000-of-00001', 'rb'))]
+
+                Process(target=self.post_network_ckpt,
+                        kwargs={"ip": "10.0.201.96", "path": ckpt_path, "file": file}).start()
+                Process(target=self.post_network_ckpt,
+                        kwargs={"ip": "10.0.201.98", "path": ckpt_path, "file": file}).start()
 
         self.cleanup()
 
-    def post_network_ckpt(self):
-        ckpt_path = tf.train.latest_checkpoint(self.network_checkpoint_folder)
-        file = [('files', open(ckpt_path + '.meta', 'rb')),
-                ('files', open(ckpt_path + '.index', 'rb')),
-                ('files', open(ckpt_path + '.data-00000-of-00001', 'rb'))]
-        r = requests.post('http://127.0.0.1:6667/d3rl/network', files=file)
+    def post_network_ckpt(self, ckpt_path, ip, file):
+
+        r = requests.post('http://' + ip + ':6668/d3rl/network', files=file)
         # print(r.text)
-        print("Post network ckpt: %s." % ckpt_path)
+        logging.info("Post network ckpt: {} to {}.".format(ckpt_path, ip))
 
     def cleanup(self):
         super(PAACLearner, self).cleanup()
