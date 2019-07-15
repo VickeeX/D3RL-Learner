@@ -176,7 +176,7 @@ class PAACLearner(ActorLearner):
                 y_batch[t] = np.copy(estimated_return)
                 adv_batch[t] = estimated_return - values[t]
 
-            flat_states = states.reshape([self.max_local_steps * self.emulator_counts] + [84, 84, 4])
+            flat_states = states[:-1].reshape([self.max_local_steps * self.emulator_counts] + [84, 84, 4])
             flat_y_batch = y_batch.reshape(-1)
             flat_adv_batch = adv_batch.reshape(-1)
             flat_actions = actions.reshape(max_local_steps * self.emulator_counts, self.num_actions)
